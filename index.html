@@ -15,7 +15,7 @@
         body {
             font-family: 'Inter', sans-serif;
         }
-        .file-list-item, .detail-row {
+        .file-list-item, .detail-row, .section-container {
             animation: fadeIn 0.5s ease-in-out;
         }
         @keyframes fadeIn {
@@ -29,11 +29,21 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+        .file-list-item.dragging {
+            opacity: 0.5;
+            background-color: #e0e7ff;
+        }
+        .drag-over {
+            border-top: 2px solid #4f46e5;
+        }
+        .drag-handle {
+            cursor: move;
+        }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800 flex items-center justify-center min-h-screen p-4">
 
-    <div class="w-full max-w-2xl bg-white rounded-xl shadow-lg p-6 md:p-8">
+    <div class="w-full max-w-3xl bg-white rounded-xl shadow-lg p-6 md:p-8">
         
         <!-- Main Header -->
         <div class="text-center mb-6">
@@ -50,12 +60,9 @@
                     <input type="text" id="cover-title" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm" placeholder="e.g., Quarterly Report">
                  </div>
                  
-                 <!-- Dynamic Subject/Description Section -->
                  <div>
                     <label class="block text-sm font-medium text-gray-700">Description Details</label>
-                    <div id="subject-details-container" class="mt-2 space-y-2">
-                        <!-- Dynamic rows will be inserted here -->
-                    </div>
+                    <div id="subject-details-container" class="mt-2 space-y-2"></div>
                     <button id="add-subject-row-btn" type="button" class="mt-2 text-sm font-medium text-blue-600 hover:text-blue-800">+ Add Detail</button>
                  </div>
 
@@ -78,29 +85,18 @@
              </div>
         </div>
 
-        <!-- File Upload Area -->
-        <div id="upload-area">
-            <label for="pdf-upload" class="flex justify-center w-full h-48 px-4 transition bg-white border-2 border-gray-300 border-dashed rounded-md appearance-none cursor-pointer hover:border-gray-400 focus:outline-none">
-                <span class="flex items-center space-x-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                    </svg>
-                    <span class="font-medium text-gray-600">
-                        Drop PDF files here or
-                        <span class="text-blue-600 underline">browse to add more</span>
-                    </span>
-                </span>
-                <input type="file" id="pdf-upload" name="files" multiple accept=".pdf" class="hidden">
-            </label>
-        </div>
-
-        <!-- Selected Files List -->
-        <div id="file-list-container" class="mt-6 hidden">
-            <div class="flex justify-between items-center mb-2">
-                 <h2 class="text-lg font-semibold text-gray-700">Selected Files:</h2>
-                 <button id="clear-all-btn" class="text-sm text-red-500 hover:text-red-700 font-medium">Clear All</button>
+        <!-- Sections Management Area -->
+        <div class="mb-6">
+            <h2 class="text-lg font-semibold text-gray-700 mb-3">Document Sections</h2>
+            <div id="sections-container" class="space-y-4">
+                <!-- Sections will be dynamically added here -->
             </div>
-            <ul id="file-list" class="space-y-2"></ul>
+            <div class="mt-4">
+                <button id="add-section-btn" class="w-full flex justify-center items-center py-2 px-4 border border-dashed border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg>
+                    Add New Section
+                </button>
+            </div>
         </div>
         
         <!-- Action Buttons & Status -->
@@ -124,15 +120,10 @@
     const { PDFDocument, rgb, StandardFonts } = PDFLib;
 
     // DOM elements
-    const uploadInput = document.getElementById('pdf-upload');
-    const uploadArea = document.getElementById('upload-area');
-    const fileListContainer = document.getElementById('file-list-container');
-    const fileList = document.getElementById('file-list');
     const mergeBtn = document.getElementById('merge-btn');
     const statusDiv = document.getElementById('status');
     const downloadContainer = document.getElementById('download-container');
     const downloadLink = document.getElementById('download-link');
-    const clearAllBtn = document.getElementById('clear-all-btn');
     const coverTitleInput = document.getElementById('cover-title');
     const coverAuthorInput = document.getElementById('cover-author');
     const coverImageInput = document.getElementById('cover-image');
@@ -141,240 +132,296 @@
     const includeDateCheckbox = document.getElementById('include-date');
     const subjectDetailsContainer = document.getElementById('subject-details-container');
     const addSubjectRowBtn = document.getElementById('add-subject-row-btn');
+    const sectionsContainer = document.getElementById('sections-container');
+    const addSectionBtn = document.getElementById('add-section-btn');
 
-    let uploadedFiles = [];
+    // Main data structure for sections and files
+    let sections = [];
+    let fileIdCounter = 0; // Unique ID counter for files
     
-    function addFiles(files) {
-        const newFiles = Array.from(files);
-        let filesAdded = 0;
-        newFiles.forEach(file => {
-            const isDuplicate = uploadedFiles.some(existingFile => 
-                existingFile.name === file.name && existingFile.size === file.size
-            );
-            if (!isDuplicate && file.type === 'application/pdf') {
-                uploadedFiles.push(file);
-                filesAdded++;
-            }
+    // --- UI Management ---
+    function renderSections() {
+        sectionsContainer.innerHTML = '';
+        let totalFiles = 0;
+        sections.forEach((section, sectionIndex) => {
+            totalFiles += section.files.length;
+            const sectionEl = document.createElement('div');
+            sectionEl.className = 'section-container p-4 border border-gray-200 rounded-lg';
+            sectionEl.setAttribute('data-section-index', sectionIndex);
+
+            sectionEl.innerHTML = `
+                <div class="flex justify-between items-center mb-3">
+                    <input type="text" class="section-title-input text-lg font-semibold border-b-2 border-transparent focus:border-blue-500 focus:outline-none" value="${section.title}" placeholder="Section ${sectionIndex + 1} Title">
+                    <button class="remove-section-btn text-red-500 hover:text-red-700 p-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" /></svg>
+                    </button>
+                </div>
+                <ul class="file-list space-y-2 mb-3">
+                    ${section.files.map((file, fileIndex) => `
+                        <li class="file-list-item flex items-center p-2 bg-gray-100 rounded-md" draggable="true" data-index="${fileIndex}">
+                            <span class="drag-handle text-gray-500 mr-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v12a1 1 0 11-2 0V4a1 1 0 011-1zM4 9a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1z" clip-rule="evenodd" transform="rotate(90 10 10)" /></svg></span>
+                            <div class="flex-grow overflow-hidden mr-2"><span class="font-medium text-sm truncate">${file.name}</span></div>
+                            <div class="flex-shrink-0"><span class="text-xs text-gray-500 mr-4">${(file.size / 1024 / 1024).toFixed(2)} MB</span>
+                            <button class="remove-file-btn text-red-500 hover:text-red-700"><svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button></div>
+                        </li>
+                    `).join('')}
+                </ul>
+                <label class="add-files-label flex justify-center w-full px-4 py-6 transition bg-white border-2 border-gray-300 border-dashed rounded-md appearance-none cursor-pointer hover:border-gray-400">
+                    <span class="flex items-center space-x-2"><svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                    <span class="font-medium text-gray-600">Drop files or <span class="text-blue-600 underline">browse</span></span></span>
+                    <input type="file" multiple accept=".pdf" class="hidden add-files-input">
+                </label>
+            `;
+            sectionsContainer.appendChild(sectionEl);
         });
-        if(filesAdded > 0) {
-            updateFileListUI();
-        }
+        mergeBtn.disabled = totalFiles === 0;
     }
 
-    uploadInput.addEventListener('change', (event) => {
-        if (event.target.files.length === 0) return;
-        addFiles(event.target.files);
-        event.target.value = '';
+    // --- Event Handlers ---
+    addSectionBtn.addEventListener('click', () => {
+        sections.push({ title: `Section ${sections.length + 1}`, files: [] });
+        renderSections();
+    });
+
+    sectionsContainer.addEventListener('change', (e) => {
+        if (e.target.classList.contains('section-title-input')) {
+            const sectionIndex = e.target.closest('.section-container').dataset.sectionIndex;
+            sections[sectionIndex].title = e.target.value;
+        }
+        if (e.target.classList.contains('add-files-input')) {
+            const sectionIndex = e.target.closest('.section-container').dataset.sectionIndex;
+            const newFiles = Array.from(e.target.files);
+            newFiles.forEach(file => {
+                const isDuplicate = sections[sectionIndex].files.some(f => f.name === file.name && f.size === file.size);
+                if (!isDuplicate) {
+                    file.uniqueId = fileIdCounter++; // Assign unique ID
+                    sections[sectionIndex].files.push(file);
+                }
+            });
+            renderSections();
+        }
+    });
+
+    sectionsContainer.addEventListener('click', (e) => {
+        const removeSectionBtn = e.target.closest('.remove-section-btn');
+        if (removeSectionBtn) {
+            const sectionIndex = removeSectionBtn.closest('.section-container').dataset.sectionIndex;
+            sections.splice(sectionIndex, 1);
+            renderSections();
+        }
+        const removeFileBtn = e.target.closest('.remove-file-btn');
+        if (removeFileBtn) {
+            const sectionIndex = removeFileBtn.closest('.section-container').dataset.sectionIndex;
+            const fileIndex = removeFileBtn.closest('.file-list-item').dataset.index;
+            sections[sectionIndex].files.splice(fileIndex, 1);
+            renderSections();
+        }
+    });
+
+    let draggedFileIndex = null;
+    let draggedSectionIndex = null;
+
+    sectionsContainer.addEventListener('dragstart', (e) => {
+        const target = e.target.closest('.file-list-item');
+        if (target) {
+            draggedFileIndex = parseInt(target.dataset.index, 10);
+            draggedSectionIndex = parseInt(target.closest('.section-container').dataset.sectionIndex, 10);
+            e.dataTransfer.effectAllowed = 'move';
+            setTimeout(() => target.classList.add('dragging'), 0);
+        }
+    });
+
+    sectionsContainer.addEventListener('dragend', (e) => {
+        const target = e.target.closest('.file-list-item');
+        if(target) target.classList.remove('dragging');
+        draggedFileIndex = null;
+        draggedSectionIndex = null;
+    });
+
+    sectionsContainer.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        const targetItem = e.target.closest('.file-list-item');
+        if (targetItem) {
+            const targetSectionIndex = parseInt(targetItem.closest('.section-container').dataset.sectionIndex, 10);
+            if(targetSectionIndex === draggedSectionIndex) {
+                 targetItem.closest('.file-list').querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+                 targetItem.classList.add('drag-over');
+            }
+        }
     });
     
-    uploadArea.addEventListener('dragover', (e) => {
-        e.preventDefault(); e.stopPropagation();
-        uploadArea.firstElementChild.classList.add('border-blue-500', 'bg-blue-50');
+    sectionsContainer.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const targetItem = e.target.closest('.file-list-item');
+        if (targetItem) {
+            targetItem.classList.remove('drag-over');
+            const targetSectionIndex = parseInt(targetItem.closest('.section-container').dataset.sectionIndex, 10);
+            if (targetSectionIndex === draggedSectionIndex) {
+                const targetFileIndex = parseInt(targetItem.dataset.index, 10);
+                const [draggedItem] = sections[draggedSectionIndex].files.splice(draggedFileIndex, 1);
+                sections[targetSectionIndex].files.splice(targetFileIndex, 0, draggedItem);
+                renderSections();
+            }
+        }
     });
-    uploadArea.addEventListener('dragleave', (e) => {
-        e.preventDefault(); e.stopPropagation();
-        uploadArea.firstElementChild.classList.remove('border-blue-500', 'bg-blue-50');
+    
+    addSubjectRowBtn.addEventListener('click', () => {
+        const row = document.createElement('div');
+        row.className = 'detail-row flex items-center space-x-2';
+        row.innerHTML = `<input type="text" class="detail-label mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm" placeholder="Label"><input type="text" class="detail-value mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm" placeholder="Value"><button type="button" class="remove-detail-row text-red-500 hover:text-red-700 p-1"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM7 9a1 1 0 000 2h6a1 1 0 100-2H7z" clip-rule="evenodd" /></svg></button>`;
+        subjectDetailsContainer.appendChild(row);
     });
-    uploadArea.addEventListener('drop', (e) => {
-        e.preventDefault(); e.stopPropagation();
-        uploadArea.firstElementChild.classList.remove('border-blue-500', 'bg-blue-50');
-        addFiles(e.dataTransfer.files);
+
+    subjectDetailsContainer.addEventListener('click', (e) => {
+        if (e.target.closest('.remove-detail-row')) e.target.closest('.detail-row').remove();
     });
 
     coverImageInput.addEventListener('change', () => {
         const file = coverImageInput.files[0];
         if (file) {
             const reader = new FileReader();
-            reader.onload = (e) => {
-                previewImg.src = e.target.result;
-                imagePreview.classList.remove('hidden');
-            };
+            reader.onload = (e) => { previewImg.src = e.target.result; imagePreview.classList.remove('hidden'); };
             reader.readAsDataURL(file);
         } else {
             imagePreview.classList.add('hidden');
         }
     });
 
-    addSubjectRowBtn.addEventListener('click', () => {
-        const row = document.createElement('div');
-        row.className = 'detail-row flex items-center space-x-2';
-        row.innerHTML = `
-            <input type="text" class="detail-label mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm" placeholder="Label (e.g., Department)">
-            <input type="text" class="detail-value mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm" placeholder="Value (e.g., Mathematics)">
-            <button type="button" class="remove-detail-row text-red-500 hover:text-red-700 p-1">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM7 9a1 1 0 000 2h6a1 1 0 100-2H7z" clip-rule="evenodd" /></svg>
-            </button>
-        `;
-        subjectDetailsContainer.appendChild(row);
-    });
-
-    subjectDetailsContainer.addEventListener('click', (e) => {
-        if (e.target.closest('.remove-detail-row')) {
-            e.target.closest('.detail-row').remove();
-        }
-    });
-
-
-    function updateFileListUI() {
-        fileList.innerHTML = ''; 
-        if (uploadedFiles.length > 0) {
-            fileListContainer.classList.remove('hidden');
-            mergeBtn.disabled = false;
-        } else {
-            fileListContainer.classList.add('hidden');
-            mergeBtn.disabled = true;
-        }
-        uploadedFiles.forEach((file, index) => {
-            const li = document.createElement('li');
-            li.className = 'file-list-item flex items-center justify-between p-3 bg-gray-100 rounded-md';
-            li.innerHTML = `<div class="flex items-center overflow-hidden mr-2"><span class="font-medium text-sm truncate">${file.name}</span></div><div class="flex items-center flex-shrink-0"><span class="text-xs text-gray-500 mr-4">${(file.size / 1024 / 1024).toFixed(2)} MB</span><button class="remove-file-btn text-red-500 hover:text-red-700" data-index="${index}"><svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button></div>`;
-            fileList.appendChild(li);
-        });
-        downloadContainer.classList.add('hidden');
-    }
-
-    fileList.addEventListener('click', (event) => {
-        const removeBtn = event.target.closest('.remove-file-btn');
-        if (removeBtn) {
-            const indexToRemove = parseInt(removeBtn.dataset.index, 10);
-            uploadedFiles.splice(indexToRemove, 1);
-            updateFileListUI();
-        }
-    });
-
-    clearAllBtn.addEventListener('click', () => {
-        uploadedFiles = [];
-        updateFileListUI();
-    });
-    
-    function drawTOCHeaders(page, fonts, dimensions, layout) {
-        const { boldFont } = fonts;
-        const { width, topMargin } = dimensions;
-        const { SNO_COL, FILENAME_COL, PAGENO_COL } = layout;
-        let y = topMargin;
-
-        page.drawText('Table of Contents', { x: 50, y, font: boldFont, size: 24, color: rgb(0, 0, 0) });
-        y -= 50;
-        
-        const snoHeaderText = 'S.No.';
-        const snoHeaderWidth = boldFont.widthOfTextAtSize(snoHeaderText, 12);
-        page.drawText(snoHeaderText, { x: SNO_COL.X + (SNO_COL.WIDTH / 2) - (snoHeaderWidth / 2), y, font: boldFont, size: 12 });
-
-        page.drawText('File Name', { x: FILENAME_COL.X, y, font: boldFont, size: 12 });
-
-        const pageNoHeaderText = 'Page No.';
-        const pageNoHeaderWidth = boldFont.widthOfTextAtSize(pageNoHeaderText, 12);
-        page.drawText(pageNoHeaderText, { x: PAGENO_COL.X + (PAGENO_COL.WIDTH / 2) - (pageNoHeaderWidth / 2), y, font: boldFont, size: 12 });
-
-        y -= 10;
-        page.drawLine({ start: { x: 55, y: y }, end: { x: width - 55, y: y }, thickness: 1, color: rgb(0.8, 0.8, 0.8), });
-        y -= 20; 
-        return y;
-    }
-
+    // --- PDF Generation Logic (REWRITTEN & FIXED) ---
     mergeBtn.addEventListener('click', async () => {
-        if (uploadedFiles.length === 0) {
-            statusDiv.textContent = 'Please add one or more PDF files.';
+        if (sections.flatMap(s => s.files).length === 0) {
+            statusDiv.textContent = 'Please add at least one PDF file to a section.';
             return;
         }
 
-        statusDiv.innerHTML = '<div class="flex items-center justify-center"><div class="loader w-6 h-6 border-4 rounded-full"></div><span class="ml-3">Processing... please wait.</span></div>';
+        statusDiv.innerHTML = '<div class="flex items-center justify-center"><div class="loader w-6 h-6 border-4 rounded-full"></div><span class="ml-3">Processing...</span></div>';
         mergeBtn.disabled = true;
-        downloadContainer.classList.add('hidden');
 
         try {
+            // --- PASS 1: Analyze and build a page plan ---
+            statusDiv.textContent = 'Analyzing PDF files...';
+            const pagePlan = [];
+            const fileInfoMap = new Map();
+            
+            const coverImageFile = coverImageInput.files[0];
+            const subjectDetails = Array.from(subjectDetailsContainer.querySelectorAll('.detail-row')).map(row => ({
+                label: row.querySelector('.detail-label').value.trim(),
+                value: row.querySelector('.detail-value').value.trim(),
+            })).filter(item => item.label && item.value);
+            
+            const hasCoverPage = coverTitleInput.value.trim() || coverAuthorInput.value.trim() || coverImageFile || subjectDetails.length > 0;
+            
+            if (hasCoverPage) {
+                pagePlan.push({ type: 'cover' });
+            }
+
+            const tocEntries = [];
+            for (const section of sections) {
+                if (section.files.length > 0) {
+                    tocEntries.push({ type: 'section', title: section.title });
+                    for (const file of section.files) {
+                        tocEntries.push({ type: 'file', name: file.name, id: file.uniqueId });
+                        const buffer = await file.arrayBuffer();
+                        const donorPdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
+                        fileInfoMap.set(file.uniqueId, { pageCount: donorPdf.getPageCount() });
+                    }
+                }
+            }
+            
+            const tocEntriesPerPage = 35;
+            const numTocPages = Math.ceil(tocEntries.length / tocEntriesPerPage);
+            for (let i = 0; i < numTocPages; i++) {
+                pagePlan.push({ type: 'toc' });
+            }
+
+            for (const section of sections) {
+                if (section.files.length > 0) {
+                    pagePlan.push({ type: 'divider', title: section.title });
+                    for (const file of section.files) {
+                        const info = fileInfoMap.get(file.uniqueId);
+                        for (let i = 0; i < info.pageCount; i++) {
+                            pagePlan.push({ type: 'content', id: file.uniqueId, sourcePageIndex: i });
+                        }
+                    }
+                }
+            }
+
+            // --- PASS 2: Assemble the PDF from the plan ---
+            statusDiv.textContent = 'Assembling PDF document...';
             const mergedPdf = await PDFDocument.create();
+            const pageRefs = [];
+            const A4_SIZE = { width: 595.28, height: 841.89 };
+
+            for (const planItem of pagePlan) {
+                if (planItem.type === 'content') {
+                    const file = sections.flatMap(s => s.files).find(f => f.uniqueId === planItem.id);
+                    const buffer = await file.arrayBuffer();
+                    const donorPdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
+                    const [copiedPage] = await mergedPdf.copyPages(donorPdf, [planItem.sourcePageIndex]);
+                    const page = mergedPdf.addPage(copiedPage);
+                    if (planItem.sourcePageIndex === 0) {
+                         pageRefs.push({ id: planItem.id, ref: page.ref });
+                    }
+                } else {
+                    const page = mergedPdf.addPage([A4_SIZE.width, A4_SIZE.height]);
+                    if (planItem.type === 'divider') {
+                        pageRefs.push({ title: planItem.title, ref: page.ref });
+                    }
+                }
+            }
+
+            // --- PASS 3: Draw content on the existing pages ---
             const tocFont = await mergedPdf.embedFont(StandardFonts.Helvetica);
             const tocBoldFont = await mergedPdf.embedFont(StandardFonts.HelveticaBold);
             const coverPageFont = await mergedPdf.embedFont(StandardFonts.TimesRoman);
             const coverPageBoldFont = await mergedPdf.embedFont(StandardFonts.TimesRomanBold);
 
-            const A4_SIZE = { width: 595.28, height: 841.89 };
+            const refToIndexMap = new Map();
+            mergedPdf.getPages().forEach((page, index) => {
+                refToIndexMap.set(page.ref, index);
+            });
 
-            const coverTitle = coverTitleInput.value.trim();
-            const coverAuthor = coverAuthorInput.value.trim();
-            const coverImageFile = coverImageInput.files[0];
+            let pagePlanIndex = 0;
             
-            const subjectDetailRows = subjectDetailsContainer.querySelectorAll('.detail-row');
-            const subjectDetails = Array.from(subjectDetailRows).map(row => {
-                const label = row.querySelector('.detail-label').value.trim();
-                const value = row.querySelector('.detail-value').value.trim();
-                return { label, value };
-            }).filter(item => item.label && item.value);
-
-            const hasCoverPageInfo = coverTitle || subjectDetails.length > 0 || coverAuthor;
-            const hasHeaderImage = coverImageFile;
-            let coverPageOffset = 0;
-
-            if (hasCoverPageInfo || hasHeaderImage) {
-                coverPageOffset = 1;
-                const coverPage = mergedPdf.addPage([A4_SIZE.width, A4_SIZE.height]);
+            if (hasCoverPage) {
+                statusDiv.textContent = 'Drawing cover page...';
+                const coverPage = mergedPdf.getPage(pagePlanIndex);
                 const { width, height } = coverPage.getSize();
-                
                 let currentY = height - 50;
 
-                if (hasHeaderImage) {
+                if (coverImageFile) {
                     const imageBytes = await coverImageFile.arrayBuffer();
-                    let embeddedImage;
-                    if (coverImageFile.type === 'image/png') {
-                        embeddedImage = await mergedPdf.embedPng(imageBytes);
-                    } else {
-                        embeddedImage = await mergedPdf.embedJpg(imageBytes);
-                    }
-                    
-                    const maxWidth = width - 100;
-                    const scaledDims = embeddedImage.scaleToFit(maxWidth, 150);
-                    
-                    const imageX = (width / 2) - (scaledDims.width / 2);
+                    const embeddedImage = coverImageFile.type === 'image/png' ? await mergedPdf.embedPng(imageBytes) : await mergedPdf.embedJpg(imageBytes);
+                    const scaledDims = embeddedImage.scaleToFit(width - 100, 150);
                     currentY -= scaledDims.height;
-                    
-                    coverPage.drawImage(embeddedImage, {
-                        x: imageX,
-                        y: currentY,
-                        width: scaledDims.width,
-                        height: scaledDims.height,
-                    });
+                    coverPage.drawImage(embeddedImage, { x: (width / 2) - (scaledDims.width / 2), y: currentY, width: scaledDims.width, height: scaledDims.height });
                     currentY -= 50;
                 } else {
                     currentY = height * 0.75;
                 }
                 
-                if (coverTitle) {
-                    const titleWidth = coverPageBoldFont.widthOfTextAtSize(coverTitle, 32);
-                    coverPage.drawText(coverTitle, { x: (width / 2) - (titleWidth / 2), y: currentY, font: coverPageBoldFont, size: 32, color: rgb(0, 0, 0) });
+                if (coverTitleInput.value.trim()) {
+                    const title = coverTitleInput.value.trim();
+                    const titleWidth = coverPageBoldFont.widthOfTextAtSize(title, 32);
+                    coverPage.drawText(title, { x: (width / 2) - (titleWidth / 2), y: currentY, font: coverPageBoldFont, size: 32 });
                 }
-                
+
                 if (subjectDetails.length > 0) {
                     const detailFontSize = 14;
                     const detailLineHeight = detailFontSize * 1.5;
                     const totalDetailHeight = subjectDetails.length * detailLineHeight;
                     let detailY = (height / 2) + (totalDetailHeight / 2) - detailLineHeight;
-                    
-                    const labelColX = 150;
-                    const valueColX = 280;
-
                     for (const detail of subjectDetails) {
-                        coverPage.drawText(`${detail.label}:`, {
-                            x: labelColX,
-                            y: detailY,
-                            font: coverPageBoldFont,
-                            size: detailFontSize,
-                            color: rgb(0, 0, 0),
-                        });
-                        coverPage.drawText(detail.value, {
-                            x: valueColX,
-                            y: detailY,
-                            font: coverPageFont,
-                            size: detailFontSize,
-                            color: rgb(0.2, 0.2, 0.2),
-                        });
+                        coverPage.drawText(`${detail.label}:`, { x: 150, y: detailY, font: coverPageBoldFont, size: detailFontSize });
+                        coverPage.drawText(detail.value, { x: 280, y: detailY, font: coverPageFont, size: detailFontSize, color: rgb(0.2, 0.2, 0.2) });
                         detailY -= detailLineHeight;
                     }
                 }
 
-                if (coverAuthor) {
-                    const authorWidth = coverPageFont.widthOfTextAtSize(coverAuthor, 14);
-                     coverPage.drawText(coverAuthor, { x: (width / 2) - (authorWidth / 2), y: height * 0.25, font: coverPageFont, size: 14, color: rgb(0.3, 0.3, 0.3) });
+                if (coverAuthorInput.value.trim()) {
+                    const author = coverAuthorInput.value.trim();
+                    const authorWidth = coverPageFont.widthOfTextAtSize(author, 14);
+                    coverPage.drawText(author, { x: (width / 2) - (authorWidth / 2), y: height * 0.25, font: coverPageFont, size: 14 });
                 }
 
                 if (includeDateCheckbox.checked) {
@@ -382,109 +429,96 @@
                     const dateWidth = coverPageFont.widthOfTextAtSize(dateText, 12);
                     coverPage.drawText(dateText, { x: (width / 2) - (dateWidth / 2), y: height * 0.2, font: coverPageFont, size: 12, color: rgb(0.5, 0.5, 0.5) });
                 }
-            }
-
-            const tocEntries = [];
-            let contentStartPageIndex = 0;
-            for (const [index, file] of uploadedFiles.entries()) {
-                statusDiv.innerHTML = `<div class="flex items-center justify-center"><div class="loader w-6 h-6 border-4 rounded-full"></div><span class="ml-3">Reading file ${index + 1}/${uploadedFiles.length}</span></div>`;
-                tocEntries.push({ name: file.name, targetPageIndex: contentStartPageIndex });
-                const arrayBuffer = await file.arrayBuffer();
-                const donorPdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-                const copiedPages = await mergedPdf.copyPages(donorPdf, donorPdf.getPageIndices());
-                copiedPages.forEach(page => mergedPdf.addPage(page));
-                contentStartPageIndex += donorPdf.getPageCount();
-            }
-
-            const TOP_MARGIN = A4_SIZE.height - 70;
-            const BOTTOM_MARGIN = 50;
-            const LINE_HEIGHT = 25;
-            const HEADER_SPACE = 105;
-            const ENTRIES_PER_PAGE = Math.floor((TOP_MARGIN - HEADER_SPACE - BOTTOM_MARGIN) / LINE_HEIGHT);
-            const numTocPages = Math.ceil(tocEntries.length / ENTRIES_PER_PAGE);
-
-            if (numTocPages > 0) {
-                statusDiv.innerHTML = '<div class="flex items-center justify-center"><div class="loader w-6 h-6 border-4 rounded-full"></div><span class="ml-3">Creating index pages...</span></div>';
-                for (let i = 0; i < numTocPages; i++) {
-                    mergedPdf.insertPage(coverPageOffset + i, [A4_SIZE.width, A4_SIZE.height]);
-                }
+                pagePlanIndex++;
             }
             
+            const firstTocPageRef = numTocPages > 0 ? mergedPdf.getPage(pagePlanIndex).ref : null;
+
             if (numTocPages > 0) {
-                 statusDiv.innerHTML = '<div class="flex items-center justify-center"><div class="loader w-6 h-6 border-4 rounded-full"></div><span class="ml-3">Adding navigation links...</span></div>';
-                 const firstTocPageRef = mergedPdf.getPage(coverPageOffset).ref;
-                 for (let i = coverPageOffset + numTocPages; i < mergedPdf.getPageCount(); i++) {
-                     const page = mergedPdf.getPage(i);
-                     const { width } = page.getSize();
-                     const hotspotSize = 50;
-                     const linkAnnotation = mergedPdf.context.obj({
+                statusDiv.textContent = 'Generating Table of Contents...';
+                let currentTocPageNumber = 0;
+                let y = A4_SIZE.height - 70;
+                const lineHeight = 22;
+                const sectionSpacing = 15;
+                let serialNumber = 1;
+
+                let tocPage = mergedPdf.getPage(pagePlanIndex + currentTocPageNumber);
+                tocPage.drawText('Table of Contents', { x: 50, y, font: tocBoldFont, size: 24 });
+                y -= 40;
+
+                for (const entry of tocEntries) {
+                     if (y < 60) {
+                        currentTocPageNumber++;
+                        tocPage = mergedPdf.getPage(pagePlanIndex + currentTocPageNumber);
+                        y = A4_SIZE.height - 70;
+                    }
+
+                    let entryRef;
+                    if (entry.type === 'section') {
+                        entryRef = pageRefs.find(p => p.title === entry.title).ref;
+                    } else {
+                        entryRef = pageRefs.find(p => p.id === entry.id).ref;
+                    }
+                    
+                    const targetPageIndex = refToIndexMap.get(entryRef);
+                    const pageNumberText = `${targetPageIndex + 1}`;
+
+                    if (entry.type === 'section') {
+                        y -= sectionSpacing;
+                        tocPage.drawText(entry.title, { x: 60, y, font: tocBoldFont, size: 14 });
+                        const textWidth = tocBoldFont.widthOfTextAtSize(pageNumberText, 14);
+                        tocPage.drawText(pageNumberText, { x: A4_SIZE.width - 60 - textWidth, y, font: tocBoldFont, size: 14 });
+                        y -= lineHeight;
+                    } else {
+                        const snoText = `${serialNumber}.`;
+                        tocPage.drawText(snoText, { x: 80, y, font: tocFont, size: 12 });
+
+                        const displayName = entry.name.replace(/\.pdf$/i, '');
+                        tocPage.drawText(displayName, { x: 110, y, font: tocFont, size: 12, color: rgb(0, 0.4, 0.8) });
+                        
+                        const textWidth = tocFont.widthOfTextAtSize(pageNumberText, 12);
+                        tocPage.drawText(pageNumberText, { x: A4_SIZE.width - 60 - textWidth, y, font: tocFont, size: 12 });
+                        y -= lineHeight;
+                        serialNumber++;
+                    }
+                    
+                    tocPage.node.addAnnot(mergedPdf.context.obj({
+                        Type: 'Annot', Subtype: 'Link',
+                        Rect: [55, y + 2, A4_SIZE.width - 55, y + lineHeight],
+                        Border: [0, 0, 0],
+                        A: { Type: 'Action', S: 'GoTo', D: [entryRef, 'Fit'] },
+                    }));
+                }
+            }
+
+            const pageCount = mergedPdf.getPageCount();
+            for(let i = 0; i < pageCount; i++) {
+                const page = mergedPdf.getPage(i);
+                const pageType = pagePlan[i].type;
+                if (pageType === 'content' && firstTocPageRef) {
+                    const { width, height } = page.getSize();
+                    const hotspotSize = 50;
+                     page.node.addAnnot(mergedPdf.context.obj({
                          Type: 'Annot', Subtype: 'Link',
                          Rect: [width - hotspotSize - 10, 10, width - 10, 10 + hotspotSize],
                          Border: [0, 0, 0],
                          A: { Type: 'Action', S: 'GoTo', D: [firstTocPageRef, 'Fit'] },
-                     });
-                     page.node.addAnnot(linkAnnotation);
-                 }
+                     }));
+                }
             }
-
-            if (numTocPages > 0) {
-                statusDiv.innerHTML = '<div class="flex items-center justify-center"><div class="loader w-6 h-6 border-4 rounded-full"></div><span class="ml-3">Finalizing TOC...</span></div>';
-                const TOC_LAYOUT = {
-                    SNO_COL:      { X: 55,  WIDTH: 55 },
-                    FILENAME_COL: { X: 115 },
-                    PAGENO_COL:   { X: A4_SIZE.width - 125, WIDTH: 70 }
-                };
-
-                for (let tocPageIndex = 0; tocPageIndex < numTocPages; tocPageIndex++) {
-                    const tocPage = mergedPdf.getPage(coverPageOffset + tocPageIndex);
-                    const { width, height } = tocPage.getSize();
-                    let y = drawTOCHeaders(tocPage, { font: tocFont, boldFont: tocBoldFont }, { width, topMargin: height - 70 }, TOC_LAYOUT);
-                    
-                    const startIndex = tocPageIndex * ENTRIES_PER_PAGE;
-                    const endIndex = Math.min(startIndex + ENTRIES_PER_PAGE, tocEntries.length);
-                    const entriesForThisPage = tocEntries.slice(startIndex, endIndex);
-
-                    for (const [itemIndex, entry] of entriesForThisPage.entries()) {
-                        const finalPageNumberToDisplay = coverPageOffset + numTocPages + entry.targetPageIndex + 1;
-                        const targetPage = mergedPdf.getPage(finalPageNumberToDisplay - 1);
-                        const serialNumber = startIndex + itemIndex + 1;
-
-                        const snoText = `${serialNumber}.`;
-                        const snoTextWidth = tocFont.widthOfTextAtSize(snoText, 11);
-                        const snoX = TOC_LAYOUT.SNO_COL.X + (TOC_LAYOUT.SNO_COL.WIDTH / 2) - (snoTextWidth / 2);
-                        tocPage.drawText(snoText, { x: snoX, y, font: tocFont, size: 11, color: rgb(0.2, 0.2, 0.2) });
-                        
-                        // MODIFIED: Remove .pdf extension for display
-                        let displayName = entry.name.replace(/\.pdf$/i, '');
-                        let truncatedText = displayName;
-                        const maxTextWidth = (width - 250);
-                        if (tocFont.widthOfTextAtSize(truncatedText, 12) > maxTextWidth) {
-                            let currentWidth = 0;
-                            for (let k = 0; k < truncatedText.length; k++) {
-                                currentWidth += tocFont.widthOfTextAtSize(truncatedText[k], 12);
-                                if (currentWidth > maxTextWidth - 20) { truncatedText = truncatedText.substring(0, k) + '...'; break; }
-                            }
-                        }
-                        tocPage.drawText(truncatedText, { x: TOC_LAYOUT.FILENAME_COL.X, y, font: tocFont, size: 12, color: rgb(0, 0.4, 0.8) });
-                        
-                        const pageNoText = `${finalPageNumberToDisplay}`;
-                        const pageNoTextWidth = tocFont.widthOfTextAtSize(pageNoText, 12);
-                        const pageNoX = TOC_LAYOUT.PAGENO_COL.X + (TOC_LAYOUT.PAGENO_COL.WIDTH / 2) - (pageNoTextWidth / 2);
-                        tocPage.drawText(pageNoText, { x: pageNoX, y, font: tocFont, size: 12, color: rgb(0.2, 0.2, 0.2) });
-
-                        const linkRect = { x: TOC_LAYOUT.FILENAME_COL.X, y: y - 2, width: maxTextWidth, height: 14 };
-                        const linkAnnotation = mergedPdf.context.obj({
-                            Type: 'Annot', Subtype: 'Link',
-                            Rect: [linkRect.x, linkRect.y, linkRect.x + linkRect.width, linkRect.y + linkRect.height],
-                            Border: [0, 0, 0],
-                            A: { Type: 'Action', S: 'GoTo', D: [targetPage.ref, 'Fit'] },
-                        });
-                        tocPage.node.addAnnot(linkAnnotation);
-                        y -= LINE_HEIGHT;
-                    }
+            
+            // Draw Section Dividers
+            const dividerPlanItems = pagePlan.filter(p => p.type === 'divider');
+            for (const planItem of dividerPlanItems) {
+                const dividerRef = pageRefs.find(p => p.title === planItem.title).ref;
+                const pageIndex = refToIndexMap.get(dividerRef);
+                if (pageIndex !== undefined) {
+                    const page = mergedPdf.getPage(pageIndex);
+                    page.drawText(planItem.title, { x: 70, y: A4_SIZE.height / 2, font: coverPageBoldFont, size: 32, color: rgb(0.1, 0.1, 0.2) });
                 }
             }
 
+            // Finalize and Download
             const pdfBytes = await mergedPdf.save();
             const blob = new Blob([pdfBytes], { type: 'application/pdf' });
             const url = URL.createObjectURL(blob);
@@ -498,6 +532,9 @@
             mergeBtn.disabled = false;
         }
     });
+
+    // Initial render
+    renderSections();
 </script>
 </body>
 </html>
